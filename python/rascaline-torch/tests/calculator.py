@@ -62,7 +62,6 @@ def test_compute(system):
         assert torch.all(gradient.values[i, 2, :] == torch.tensor([0, 1]))
 
     assert len(gradient.samples) == 8
-    print(gradient.samples.values)
     assert gradient.samples.names == ["sample", "structure", "atom"]
     assert tuple(gradient.samples[0]) == (0, 0, 0)
     assert tuple(gradient.samples[1]) == (0, 0, 1)
@@ -191,3 +190,4 @@ def test_script(tmpdir):
 
     with tmpdir.as_cwd():
         torch.jit.save(module, "test-save.torch")
+        module = torch.jit.load("test-save.torch")

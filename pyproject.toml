@@ -1,7 +1,7 @@
 [project]
 name = "rascaline"
-dynamic = ["version", "authors"]
-requires-python = ">=3.7"
+dynamic = ["version", "authors", "optional-dependencies"]
+requires-python = ">=3.8"
 
 readme = "README.rst"
 license = {text = "BSD-3-Clause"}
@@ -27,6 +27,7 @@ classifiers = [
 
 dependencies = [
     "metatensor-core >=0.1.0,<0.2.0",
+    "wigners",
 ]
 
 [project.urls]
