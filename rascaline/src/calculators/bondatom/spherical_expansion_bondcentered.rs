@@ -27,6 +27,11 @@ use super::{canonical_vector_for_single_triplet,ExpansionContribution,RawSpheric
 
 use super::assert_feature_gate;
 
+#[inline]
+fn VECTOR_Z_REWORK(og_z: f64, bond_length: f64) -> f64 {
+    0.5* og_z / bond_length
+}
+
 /// Parameters for spherical expansion calculator for bond-centered neighbor densities.
 ///
 /// (The spherical expansion is at the core of representations in the SOAP
@@ -186,7 +191,8 @@ impl SphericalExpansionForBonds {
         let mut dmtx_cache = BTreeMap::new();
         
         return Ok(pre_iter.into_iter().map(move |(triplet_i,triplet,invert)| {
-            let vector = canonical_vector_for_single_triplet(&triplet, invert, false, &mut mtx_cache, &mut dmtx_cache).unwrap();
+            let mut vector = canonical_vector_for_single_triplet(&triplet, invert, false, &mut mtx_cache, &mut dmtx_cache).unwrap();
+            (*vector.vect)[2] = VECTOR_Z_REWORK((*vector.vect)[2], triplet.bond_vector.norm());
             let weight = if triplet.is_self_contrib {self.center_atoms_weight} else {1.0};
             self.raw_expansion.compute_coefficients(&mut *contribution.borrow_mut(), vector.vect,weight,None);
             (triplet_i, invert, contribution.clone())
