@@ -18,12 +18,12 @@ jobs:
       - name: free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android || true
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: setup rust
         uses: dtolnay/rust-toolchain@master
@@ -38,7 +38,9 @@ jobs:
       - name: install python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install tox coverage
+          # https://github.com/tox-dev/tox/issues/3238
+          python -m pip install tox==4.14.0
+          python -m pip install coverage
 
       - name: install lcov
         run: sudo apt install -y lcov
@@ -86,7 +88,8 @@ jobs:
             coverage xml
 
       - name: upload to codecov.io
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           fail_ci_if_error: true
           files: target/tarpaulin/cobertura.xml,coverage.xml,coverage.info
+          token: ${{ secrets.CODECOV_TOKEN }}

@@ -106,6 +106,7 @@ class cmake_ext(build_ext):
                 "cmake",
                 "--build",
                 build_dir,
+                "--parallel",
                 "--config",
                 "Release",
                 "--target",
@@ -242,7 +243,7 @@ if __name__ == "__main__":
 
     install_requires = [
         "torch >= 1.11",
-        "metatensor-torch",
+        "metatensor-torch >=0.3.0,<0.4.0",
     ]
     if os.path.exists(RASCALINE_C_API):
         # we are building from a git checkout

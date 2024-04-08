@@ -47,11 +47,11 @@ pub struct BATripletInfo{
 /// Both the length of the bond and the distance between neighbors are subjected to a spherical cutoff.
 /// This pre-calculator can compute and cache this list within a given system
 /// (with two distance vectors per entry: one within the bond and one between neighbors).
-/// Then, it can re-enumerate those neighbors, either for a full system, or with restrictions on the atoms or their species.
+/// Then, it can re-enumerate those neighbors, either for a full system, or with restrictions on the atoms or their types.
 ///
 /// This saves memory/computational power by only working with "half" neighbor list
 /// This is done by only including one entry for each `i - j` bond, not both `i - j` and `j - i`.
-/// The order of i and j is that the atom with the smallest Z (or species ID in general) comes first.
+/// The order of i and j is that the atom with the smallest Z (or type ID in general) comes first.
 ///
 /// The two first atoms must not be the same atom, but the third atom may be one of them.
 /// (When periodic boundaries arise, the two first atoms may be images of each other.)
@@ -60,7 +60,7 @@ pub struct BATripletInfo{
 pub struct BATripletNeighborList {
     // /// Should we compute a full neighbor list (each pair appears twice, once as
     // /// `i-j` and once as `j-i`), or a half neighbor list (each pair only
-    // /// appears once, (such that `species_i <= species_j`))
+    // /// appears once, (such that `types_i <= types_j`))
     // pub use_half_enumeration: bool,
     /// Spherical cutoffs to use to determine if two atoms are neighbors
     pub cutoffs: [f64;2],  // bond_, third_cutoff
@@ -74,10 +74,10 @@ fn list_raw_triplets(system: &mut dyn SystemBase, bond_cutoff: f64, third_cutoff
     // atoms_cutoff needs to be a bit bigger than the one in the current 
     // implementation to be sure we get the same set of neighbors.
     system.compute_neighbors(third_cutoff + bond_cutoff/2.)?;
-    let species = system.species()?;
+    let types = system.types()?;
 
     let reorient_pair =  move |b: Pair| {
-        if species[b.first] <= species[b.second] {
+        if types[b.first] <= types[b.second] {
             b
         } else {
             Pair{
@@ -176,7 +176,7 @@ fn list_raw_triplets(system: &mut dyn SystemBase, bond_cutoff: f64, third_cutoff
 impl BATripletNeighborList {
     const CACHE_NAME_ATTR: &'static str = "bond_atom_triplets_cutoffs";
     const CACHE_NAME1: &'static str = "bond_atom_triplets_raw_list";
-    const CACHE_NAME2: &'static str = "bond_atom_triplets_species_LUT";
+    const CACHE_NAME2: &'static str = "bond_atom_triplets_types_LUT";
     const CACHE_NAME3: &'static str = "bond_atom_triplets_center_LUT";
     //type CACHE_TYPE1 = TensorBlock;
     //type CACHE_TYPE2 = BTreeMap<(i32,i32,i32),Vec<usize>>;
@@ -202,15 +202,15 @@ impl BATripletNeighborList {
     fn do_compute_for_system(&self, system: &mut System) -> Result<(), Error> {
         let triplets = list_raw_triplets(&mut **system, self.cutoffs[0], self.cutoffs[1])?;
 
-        let species = system.species()?;  // calling this again so the previous borrow expires
-        let mut triplets_by_species = BTreeMap::new();
+        let types = system.types()?;  // calling this again so the previous borrow expires
+        let mut triplets_by_types = BTreeMap::new();
         let mut triplets_by_center = {
             let sz = system.size()?;
             (0..sz).map(|i|vec![vec![];i+1]).collect::<Vec<_>>()//vec![vec![vec![];sz];sz]
         };
         for (triplet_i, triplet) in triplets.iter().enumerate() {
-            let ((s1,s2),_) = sort_pair((species[triplet.atom_i],species[triplet.atom_j]));
-            triplets_by_species.entry((s1,s2,species[triplet.atom_k]))
+            let ((s1,s2),_) = sort_pair((types[triplet.atom_i],types[triplet.atom_j]));
+            triplets_by_types.entry((s1,s2,types[triplet.atom_k]))
                 .or_insert_with(Vec::new)
                 .push(triplet_i);
             if triplet.atom_i >= triplet.atom_j{
@@ -218,11 +218,11 @@ impl BATripletNeighborList {
             } else {
                 triplets_by_center[triplet.atom_j][triplet.atom_i].push(triplet_i);
             }
-            // triplets_by_species.entry((species[triplet.bond.first],species[triplet.bond.second],species[triplet.third]))
+            // triplets_by_types.entry((types[triplet.bond.first],types[triplet.bond.second],types[triplet.third]))
             //     .or_insert_with(Vec::new)
             //     .push(triplet_i);
             // if self.use_half_enumeration  {
-            //     if sort_pair((species[triplet.bond.first], species[triplet.bond.second])).1 {
+            //     if sort_pair((types[triplet.bond.first], types[triplet.bond.second])).1 {
             //         triplets_by_center[triplet.bond.second][triplet.bond.first].push(triplet_i);
             //     } else {
             //         triplets_by_center[triplet.bond.first][triplet.bond.second].push(triplet_i);
@@ -233,7 +233,7 @@ impl BATripletNeighborList {
             // }
             
         }
-        system.store_data(Self::CACHE_NAME2.into(),triplets_by_species);
+        system.store_data(Self::CACHE_NAME2.into(),triplets_by_types);
         system.store_data(Self::CACHE_NAME3.into(),triplets_by_center);
         system.store_data(Self::CACHE_NAME_ATTR.into(),self.cutoffs);
         system.store_data(Self::CACHE_NAME1.into(),triplets);
@@ -269,7 +269,7 @@ impl BATripletNeighborList {
     }
 
     
-    fn get_species_lut<'a>(&self, system: &'a System, s1:i32, s2:i32, s3:i32) -> Result<&'a [usize],Error> {
+    fn get_types_lut<'a>(&self, system: &'a System, s1:i32, s2:i32, s3:i32) -> Result<&'a [usize],Error> {
         let full_lut: &BTreeMap<(i32,i32,i32),Vec<usize>> = system.data(&Self::CACHE_NAME2)
             .ok_or_else(||Error::Internal("triplets not yet computed".into()))?
             .downcast_ref().ok_or_else(||{Error::Internal("Failed to downcast cache".into())})?;
@@ -297,22 +297,22 @@ impl BATripletNeighborList {
         }
     }
     
-    /// for a given system, get a reference to the bond-atom triplets of given set of atomic species.
-    /// note: inverting s1 and s2 does not change the result, and the returned triplets may have these species swapped
-    pub fn get_per_system_per_species<'a>(
+    /// for a given system, get a reference to the bond-atom triplets of given set of atomic types.
+    /// note: inverting s1 and s2 does not change the result, and the returned triplets may have these types swapped
+    pub fn get_per_system_per_type<'a>(
         &self, system: &'a System,
         s1:i32,s2:i32,s3:i32
     ) -> Result<impl Iterator<Item = &'a BATripletInfo> + 'a, Error> {  
         let triplets = self.get_for_system(system)?;
-        let species_lut = self.get_species_lut(system, s1, s2, s3)?;
+        let types_lut = self.get_types_lut(system, s1, s2, s3)?;
         
-        let res = species_lut.iter().map(|triplet_i|{
+        let res = types_lut.iter().map(|triplet_i|{
             triplets.get(*triplet_i).unwrap()
         });
         Ok(res)
     }
     
-    /// for a given system, get a reference to the bond-atom triplets of given set of atomic species.
+    /// for a given system, get a reference to the bond-atom triplets of given set of atomic types.
     /// note: the triplets may be for (c2,c1) rather than (c1,c2)
     pub fn get_per_system_per_center<'a>(
         &self, system: &'a System,
@@ -327,23 +327,23 @@ impl BATripletNeighborList {
         Ok(res)
     }
     
-    /// for a given system, get a reference to the bond-atom triplets of given set of atomic species.
+    /// for a given system, get a reference to the bond-atom triplets of given set of atomic types.
     /// plus the number of each triplet
-    /// note: inverting s1 and s2 does not change the result, and the returned triplets may have these species swapped
-    pub fn get_per_system_per_species_enumerated<'a>(
+    /// note: inverting s1 and s2 does not change the result, and the returned triplets may have these types swapped
+    pub fn get_per_system_per_type_enumerated<'a>(
         &self, system: &'a System,
         s1:i32,s2:i32,s3:i32
     ) -> Result<impl Iterator<Item = (usize,&'a BATripletInfo)> + 'a, Error> {  
         let triplets = self.get_for_system(system)?;
-        let species_lut = self.get_species_lut(system, s1, s2, s3)?;
+        let types_lut = self.get_types_lut(system, s1, s2, s3)?;
         
-        let res = species_lut.iter().map(|triplet_i|{
+        let res = types_lut.iter().map(|triplet_i|{
             (*triplet_i,triplets.get(*triplet_i).unwrap())
         });
         Ok(res)
     }
     
-    /// for a given system, get a reference to the bond-atom triplets of given set of atomic species.
+    /// for a given system, get a reference to the bond-atom triplets of given set of atomic types.
     /// plus the number of each triplet
     /// note: the triplets may be for (c2,c1) rather than (c1,c2)
     pub fn get_per_system_per_center_enumerated<'a>(
@@ -454,19 +454,19 @@ mod tests {
             gen_triplet(1,2,0, false,),
         ]);
         
-        // /// ensure the per-species enumeration is correct
-        let triplets = precalc.get_per_system_per_species(&mut tsysv[0], 1,1, -42)
+        // /// ensure the per-type enumeration is correct
+        let triplets = precalc.get_per_system_per_type(&mut tsysv[0], 1,1, -42)
             .unwrap().map(|v|no_vector(v.clone())).collect::<Vec<_>>();
         assert_eq!(triplets, vec![
             gen_triplet(1,2,0, false,),
         ]);
-        let triplets = precalc.get_per_system_per_species(&mut tsysv[0], 1,1, 1)
+        let triplets = precalc.get_per_system_per_type(&mut tsysv[0], 1,1, 1)
             .unwrap().map(|v|no_vector(v.clone())).collect::<Vec<_>>();
         assert_eq!(triplets, vec![
             gen_triplet(1,2,1, true,),
             gen_triplet(1,2,2, true,),
         ]);
-        let triplets = precalc.get_per_system_per_species(&mut tsysv[0], 1,-42, 1)
+        let triplets = precalc.get_per_system_per_type(&mut tsysv[0], 1,-42, 1)
             .unwrap().map(|v|no_vector(v.clone())).collect::<Vec<_>>();
         assert_eq!(triplets, vec![
             gen_triplet(0,1,1, true,),
@@ -474,7 +474,7 @@ mod tests {
             gen_triplet(0,2,2, true,),
             gen_triplet(0,2,1, false,),
         ]);
-        let triplets = precalc.get_per_system_per_species(&mut tsysv[0], -42,1, 1)
+        let triplets = precalc.get_per_system_per_type(&mut tsysv[0], -42,1, 1)
             .unwrap().map(|v|no_vector(v.clone())).collect::<Vec<_>>();
         assert_eq!(triplets, vec![
             gen_triplet(0,1,1, true,),
@@ -594,24 +594,24 @@ mod tests {
     //         BATripletInfo{atom_i:1,atom_j:2,atom_k:2,bond_i:2,triplet_i:8,is_self_contrib:true, bond_vector:None,third_vector:None},
     //     ]);
         
-    //     // /// ensure the per-species enumeration is correct
-    //     let triplets = precalc.get_per_system_per_species(&mut tsysv[0], 1,1, -42,false).unwrap();
+    //     // /// ensure the per-type enumeration is correct
+    //     let triplets = precalc.get_per_system_per_type(&mut tsysv[0], 1,1, -42,false).unwrap();
     //     assert_eq!(triplets, vec![
     //         BATripletInfo{atom_i:1,atom_j:2,atom_k:0,bond_i:2,triplet_i:6,is_self_contrib:false,bond_vector:None,third_vector:None},
     //     ]);
-    //     let triplets = precalc.get_per_system_per_species(&mut tsysv[0], 1,1, 1,false).unwrap();
+    //     let triplets = precalc.get_per_system_per_type(&mut tsysv[0], 1,1, 1,false).unwrap();
     //     assert_eq!(triplets, vec![
     //         BATripletInfo{atom_i:1,atom_j:2,atom_k:1,bond_i:2,triplet_i:7,is_self_contrib:true, bond_vector:None,third_vector:None},
     //         BATripletInfo{atom_i:1,atom_j:2,atom_k:2,bond_i:2,triplet_i:8,is_self_contrib:true, bond_vector:None,third_vector:None},
     //     ]);
-    //     let triplets = precalc.get_per_system_per_species(&mut tsysv[0], 1,-42, 1,false).unwrap();
+    //     let triplets = precalc.get_per_system_per_type(&mut tsysv[0], 1,-42, 1,false).unwrap();
     //     assert_eq!(triplets, vec![
     //         BATripletInfo{atom_i:0,atom_j:1,atom_k:1,bond_i:0,triplet_i:1,is_self_contrib:true, bond_vector:None,third_vector:None},
     //         BATripletInfo{atom_i:0,atom_j:1,atom_k:2,bond_i:0,triplet_i:2,is_self_contrib:false,bond_vector:None,third_vector:None},
     //         BATripletInfo{atom_i:0,atom_j:2,atom_k:1,bond_i:1,triplet_i:4,is_self_contrib:false,bond_vector:None,third_vector:None},
     //         BATripletInfo{atom_i:0,atom_j:2,atom_k:2,bond_i:1,triplet_i:5,is_self_contrib:true, bond_vector:None,third_vector:None},
     //     ]);
-    //     let triplets = precalc.get_per_system_per_species(&mut tsysv[0], -42,1, 1,false).unwrap();
+    //     let triplets = precalc.get_per_system_per_type(&mut tsysv[0], -42,1, 1,false).unwrap();
     //     assert_eq!(triplets, vec![
     //         BATripletInfo{atom_i:0,atom_j:1,atom_k:1,bond_i:0,triplet_i:1,is_self_contrib:true, bond_vector:None,third_vector:None},
     //         BATripletInfo{atom_i:0,atom_j:1,atom_k:2,bond_i:0,triplet_i:2,is_self_contrib:false,bond_vector:None,third_vector:None},
