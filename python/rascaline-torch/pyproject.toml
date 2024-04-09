@@ -1,7 +1,7 @@
 [project]
 name = "rascaline-torch"
 dynamic = ["version", "authors", "dependencies"]
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 
 readme = "README.rst"
 license = {text = "BSD-3-Clause"}
@@ -37,8 +37,6 @@ requires = [
     "setuptools >=61",
     "wheel >=0.38",
     "cmake",
-    "torch >= 1.11",
-    "metatensor-torch >=0.1.0,<0.2.0",
 ]
 
 # use a custom build backend to add a dependency on the right version of rascaline

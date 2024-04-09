@@ -5,9 +5,9 @@
 
 #include <rascaline.hpp>
 #include <metatensor/torch.hpp>
+#include <metatensor/torch/atomistic.hpp>
 
 #include "rascaline/torch/exports.h"
-#include "rascaline/torch/system.hpp"
 
 namespace rascaline_torch {
 class RascalineAutograd;
@@ -75,12 +75,18 @@ class RASCALINE_TORCH_EXPORT CalculatorHolder: public torch::CustomClassHolder {
 public:
     /// Create a new calculator with the given `name` and JSON `parameters`
     CalculatorHolder(std::string name, std::string parameters):
-        calculator_(std::move(name), std::move(parameters))
+        c_name_(std::move(name)),
+        calculator_(c_name_, std::move(parameters))
     {}
 
     /// Get the name of this calculator
     std::string name() const {
         return calculator_.name();
+    }
+
+    /// Get the name used to register this calculator
+    std::string c_name() const {
+        return c_name_;
     }
 
     /// Get the parameters of this calculator
@@ -95,11 +101,12 @@ public:
 
     /// Run a calculation for the given `systems` using the given options
     metatensor_torch::TorchTensorMap compute(
-        std::vector<TorchSystem> systems,
+        std::vector<metatensor_torch::System> systems,
         TorchCalculatorOptions options = {}
     );
 
 private:
+    std::string c_name_;
     rascaline::Calculator calculator_;
 };
 
@@ -117,7 +124,7 @@ private:
 ///
 /// `forward_gradients` controls which gradients are left inside the TensorMap.
 metatensor_torch::TorchTensorMap RASCALINE_TORCH_EXPORT register_autograd(
-    std::vector<TorchSystem> systems,
+    std::vector<metatensor_torch::System> systems,
     metatensor_torch::TorchTensorMap precomputed,
     std::vector<std::string> forward_gradients
 );

@@ -3,14 +3,13 @@
 
 #include "rascaline/torch/calculator.hpp"
 #include "rascaline/torch/autograd.hpp"
-
-#include <exception>
+#include "rascaline/torch/system.hpp"
 
 using namespace metatensor_torch;
 using namespace rascaline_torch;
 
 // move a block created by rascaline to torch
-static metatensor::TensorBlock block_to_torch(
+static TorchTensorBlock block_to_torch(
     std::shared_ptr<metatensor::TensorMap> tensor,
     metatensor::TensorBlock block
 ) {
@@ -34,47 +33,53 @@ static metatensor::TensorBlock block_to_torch(
         torch::TensorOptions().dtype(torch::kF64).device(torch::kCPU)
     );
 
-    auto new_block = metatensor::TensorBlock(
-        std::unique_ptr<metatensor::DataArrayBase>(new metatensor_torch::TorchDataArray(std::move(torch_values))),
-        block.samples(),
-        block.components(),
-        block.properties()
+    auto components = std::vector<TorchLabels>();
+    components.reserve(block.components().size());
+    for (auto component: block.components()) {
+        components.emplace_back(torch::make_intrusive<LabelsHolder>(std::move(component)));
+    }
+
+    auto new_block = torch::make_intrusive<TensorBlockHolder>(
+        torch_values,
+        torch::make_intrusive<LabelsHolder>(block.samples()),
+        std::move(components),
+        torch::make_intrusive<LabelsHolder>(block.properties())
     );
 
     for (const auto& parameter: block.gradients_list()) {
         auto gradient = block_to_torch(tensor, block.gradient(parameter));
-        new_block.add_gradient(parameter, std::move(gradient));
+        new_block->add_gradient(parameter, std::move(gradient));
     }
 
     return new_block;
 }
 
-static torch::Tensor stack_all_positions(const std::vector<TorchSystem>& systems) {
+static torch::Tensor stack_all_positions(const std::vector<metatensor_torch::System>& systems) {
     auto all_positions = std::vector<torch::Tensor>();
     all_positions.reserve(systems.size());
 
     for (const auto& system: systems) {
-        all_positions.push_back(system->get_positions());
+        all_positions.push_back(system->positions().to(torch::kCPU));
     }
 
     return torch::vstack(all_positions);
 }
 
-static torch::Tensor stack_all_cells(const std::vector<TorchSystem>& systems) {
+static torch::Tensor stack_all_cells(const std::vector<metatensor_torch::System>& systems) {
     auto all_cells = std::vector<torch::Tensor>();
     all_cells.reserve(systems.size());
 
     for (const auto& system: systems) {
-        all_cells.push_back(system->get_cell());
+        all_cells.push_back(system->cell().to(torch::kCPU));
     }
 
     return torch::vstack(all_cells);
 }
 
-static bool all_systems_use_native(const std::vector<TorchSystem>& systems) {
-    auto result = systems[0]->use_native_system();
+static bool all_systems_use_native(const std::vector<SystemAdapter>& systems) {
+    auto result = systems[0].use_native_system();
     for (const auto& system: systems) {
-        if (system->use_native_system() != result) {
+        if (system.use_native_system() != result) {
             C10_THROW_ERROR(ValueError,
                 "either all or none of the systems should have pre-defined neighbor lists"
             );
@@ -115,14 +120,64 @@ static bool contains(const std::vector<std::string>& haystack, const std::string
     return std::find(std::begin(haystack), std::end(haystack), needle) != std::end(haystack);
 }
 
+static torch::ScalarType systems_dtype(const std::vector<metatensor_torch::System>& systems) {
+    if (systems.empty()) {
+        return torch::kFloat64;
+    } else {
+        auto dtype = systems[0]->scalar_type();
+        for (const auto& system: systems) {
+            if (system->scalar_type() != dtype) {
+                C10_THROW_ERROR(TypeError,
+                    std::string("all systems should have the same dtype, got ") +
+                    torch::toString(system->scalar_type()) + " and " +
+                    torch::toString(dtype)
+                );
+            }
+        }
+        return dtype;
+    }
+}
+
+static torch::Device systems_device(const std::vector<metatensor_torch::System>& systems) {
+    if (systems.empty()) {
+        return torch::kCPU;
+    } else {
+        auto device = systems[0]->device();
+        for (const auto& system: systems) {
+            if (system->device() != device) {
+                C10_THROW_ERROR(TypeError,
+                    "all systems should have the same device, got " +
+                    system->device().str() + " and " + device.str()
+                );
+            }
+        }
+        return device;
+    }
+}
+
 
 metatensor_torch::TorchTensorMap CalculatorHolder::compute(
-    std::vector<TorchSystem> systems,
+    std::vector<metatensor_torch::System> systems,
     TorchCalculatorOptions torch_options
 ) {
+    auto dtype = systems_dtype(systems);
+    auto device = systems_device(systems);
+
+    if (!device.is_cpu()) {
+        TORCH_WARN_ONCE(
+            "Systems data is on device ", device, " but rascaline only supports ",
+            "calculations on CPU. All the data will be moved to CPU and then "
+            "back on device on your behalf"
+        );
+    }
+
+    if (dtype != torch::kFloat32 && dtype != torch::kFloat64) {
+        C10_THROW_ERROR(TypeError, "rascaline only supports float64 and float32 data");
+    }
+
     auto all_positions = stack_all_positions(systems);
     auto all_cells = stack_all_cells(systems);
-    auto structures_start_ivalue = torch::IValue();
+    auto systems_start_ivalue = torch::IValue();
 
     // =============== Handle all options for the calculation =============== //
     if (torch_options.get() == nullptr) {
@@ -142,13 +197,13 @@ metatensor_torch::TorchTensorMap CalculatorHolder::compute(
     if (contains(torch_options->gradients, "positions") || all_positions.requires_grad()) {
         options.gradients.push_back("positions");
 
-        auto structures_start = c10::List<int64_t>();
+        auto systems_start = c10::List<int64_t>();
         int64_t current_start = 0;
         for (auto& system: systems) {
-            structures_start.push_back(current_start);
+            systems_start.push_back(current_start);
             current_start += static_cast<int64_t>(system->size());
         }
-        structures_start_ivalue = torch::IValue(std::move(structures_start));
+        systems_start_ivalue = torch::IValue(std::move(systems_start));
     }
 
     if (contains(torch_options->gradients, "cell") || all_cells.requires_grad()) {
@@ -163,54 +218,49 @@ metatensor_torch::TorchTensorMap CalculatorHolder::compute(
         }
     }
 
-    options.use_native_system = all_systems_use_native(systems);
+    // convert the systems
+    auto rascaline_systems = std::vector<SystemAdapter>();
+    rascaline_systems.reserve(systems.size());
+    for (auto& system: systems) {
+        rascaline_systems.emplace_back(system);
+    }
+
+    options.use_native_system = all_systems_use_native(rascaline_systems);
     if (torch_options->selected_keys().isCustomClass()) {
         options.selected_keys = torch_options->selected_keys().toCustomClass<LabelsHolder>()->as_metatensor();
     }
     options.selected_samples = torch_options->selected_samples_rascaline();
     options.selected_properties = torch_options->selected_properties_rascaline();
 
-    // convert the systems
-    auto base_systems = std::vector<rascal_system_t>();
-    base_systems.reserve(systems.size());
-    for (auto& system: systems) {
-        base_systems.push_back(system->as_rascal_system_t());
-    }
-
     // ============ run the calculation and move data to torch ============== //
     auto raw_descriptor = std::make_shared<metatensor::TensorMap>(
-        calculator_.compute(base_systems, options)
+        calculator_.compute(rascaline_systems, options)
     );
 
     // move all data to torch
-    auto blocks = std::vector<metatensor::TensorBlock>();
+    auto blocks = std::vector<TorchTensorBlock>();
+    blocks.reserve(raw_descriptor->keys().count());
     for (size_t block_i=0; block_i<raw_descriptor->keys().count(); block_i++) {
-        blocks.push_back(block_to_torch(raw_descriptor, raw_descriptor->block_by_id(block_i)));
+        blocks.emplace_back(block_to_torch(raw_descriptor, raw_descriptor->block_by_id(block_i)));
     }
 
     auto torch_descriptor = torch::make_intrusive<metatensor_torch::TensorMapHolder>(
-        metatensor::TensorMap(raw_descriptor->keys(), std::move(blocks))
+        torch::make_intrusive<LabelsHolder>(raw_descriptor->keys()),
+        std::move(blocks)
     );
 
-    // ============ register the autograd nodes for each block ============== //
-    auto all_positions_vec = std::vector<torch::Tensor>();
-    all_positions_vec.reserve(systems.size());
-
-    auto all_cells_vec = std::vector<torch::Tensor>();
-    all_cells_vec.reserve(systems.size());
-
-    for (const auto& system: systems) {
-        all_positions_vec.push_back(system->get_positions());
-        all_cells_vec.push_back(system->get_cell());
+    if (!systems.empty()) {
+        torch_descriptor = torch_descriptor->to(systems[0]->scalar_type(), systems[0]->device());
     }
 
+    // ============ register the autograd nodes for each block ============== //
     for (int64_t block_i=0; block_i<torch_descriptor->keys()->count(); block_i++) {
         auto block = TensorMapHolder::block_by_id(torch_descriptor, block_i);
         // see `RascalineAutograd::forward` for an explanation of what's happening
         auto _ = RascalineAutograd::apply(
             all_positions,
             all_cells,
-            structures_start_ivalue,
+            systems_start_ivalue,
             block
         );
     }
@@ -225,7 +275,7 @@ metatensor_torch::TorchTensorMap CalculatorHolder::compute(
 
 
 metatensor_torch::TorchTensorMap rascaline_torch::register_autograd(
-    std::vector<TorchSystem> systems,
+    std::vector<metatensor_torch::System> systems,
     metatensor_torch::TorchTensorMap precomputed,
     std::vector<std::string> forward_gradients
 ) {
@@ -235,7 +285,7 @@ metatensor_torch::TorchTensorMap rascaline_torch::register_autograd(
 
     auto all_positions = stack_all_positions(systems);
     auto all_cells = stack_all_cells(systems);
-    auto structures_start_ivalue = torch::IValue();
+    auto systems_start_ivalue = torch::IValue();
 
     auto precomputed_gradients = TensorMapHolder::block_by_id(precomputed, 0)->gradients_list();
 
@@ -248,13 +298,13 @@ metatensor_torch::TorchTensorMap rascaline_torch::register_autograd(
             );
         }
 
-        auto structures_start = c10::List<int64_t>();
+        auto systems_start = c10::List<int64_t>();
         int64_t current_start = 0;
         for (auto& system: systems) {
-            structures_start.push_back(current_start);
+            systems_start.push_back(current_start);
             current_start += static_cast<int64_t>(system->size());
         }
-        structures_start_ivalue = torch::IValue(std::move(structures_start));
+        systems_start_ivalue = torch::IValue(std::move(systems_start));
     }
 
     if (all_cells.requires_grad()) {
@@ -284,7 +334,7 @@ metatensor_torch::TorchTensorMap rascaline_torch::register_autograd(
         auto _ = RascalineAutograd::apply(
             all_positions,
             all_cells,
-            structures_start_ivalue,
+            systems_start_ivalue,
             block
         );
     }

@@ -7,43 +7,33 @@
 #include <torch/script.h>
 
 #include <rascaline.hpp>
+#include <metatensor/torch/atomistic.hpp>
 
 #include "rascaline/torch/exports.h"
 
 namespace rascaline_torch {
 
-class SystemHolder;
-/// TorchScript will always manipulate `SystemHolder` through a `torch::intrusive_ptr`
-using TorchSystem = torch::intrusive_ptr<SystemHolder>;
-
-/// Implementation of `rascaline::System` using torch tensors as backing memory
-/// for all the data.
+/// Implementation of `rascaline::System` using `metatensor_torch::System` as
+/// backing memory for all the data.
 ///
 /// This can either be used with the Rust neighbor list implementation; or a set
 /// of pre-computed neighbor lists can be added to the system.
-class RASCALINE_TORCH_EXPORT SystemHolder final: public rascaline::System, public torch::CustomClassHolder {
+class RASCALINE_TORCH_EXPORT SystemAdapter final: public rascaline::System {
 public:
-    /// Construct a `TorchSystem` with the given tensors.
-    ///
-    /// @param species 1D integer tensor containing the atoms/particles species
-    /// @param positions 2D tensor (the shape should be `len(species) x 3`)
-    ///     containing the atoms/particles positions
-    /// @param cell 3x3 tensor containing the bounding box for periodic boundary
-    ///     conditions, or full of 0 if the system is non-periodic.
-    ///
-    SystemHolder(torch::Tensor species, torch::Tensor positions, torch::Tensor cell);
+    /// Create a `SystemAdapter` wrapping an existing `metatensor_torch::System`
+    SystemAdapter(metatensor_torch::System system);
 
-    /// SystemHolder can not be copy constructed
-    SystemHolder(const SystemHolder&) = delete;
-    /// SystemHolder can not be copy assigned
-    SystemHolder& operator=(const SystemHolder&) = delete;
+    ~SystemAdapter() override = default;
 
-    /// SystemHolder can be move constructed
-    SystemHolder(SystemHolder&&) = default;
-    /// SystemHolder can be move assigned
-    SystemHolder& operator=(SystemHolder&&) = default;
+    /// `SystemAdapter` is copy-constructible
+    SystemAdapter(const SystemAdapter&) = default;
+    /// `SystemAdapter` is move-constructible
+    SystemAdapter(SystemAdapter&&) = default;
 
-    ~SystemHolder() override = default;
+    /// `SystemAdapter` can be copy-assigned
+    SystemAdapter& operator=(const SystemAdapter&) = default;
+    /// `SystemAdapter` can be move-assigned
+    SystemAdapter& operator=(SystemAdapter&&) = default;
 
     /*========================================================================*/
     /*            Functions to implement rascaline::System                    */
@@ -51,12 +41,12 @@ public:
 
     /// @private
     uintptr_t size() const override {
-        return static_cast<uintptr_t>(species_.size(0));
+        return static_cast<uintptr_t>(types_.size(0));
     }
 
     /// @private
-    const int32_t* species() const override {
-        return species_.data_ptr<int32_t>();
+    const int32_t* types() const override {
+        return types_.data_ptr<int32_t>();
     }
 
     /// @private
@@ -81,7 +71,7 @@ public:
     const std::vector<rascal_pair_t>& pairs() const override;
 
     /// @private
-    const std::vector<rascal_pair_t>& pairs_containing(uintptr_t center) const override;
+    const std::vector<rascal_pair_t>& pairs_containing(uintptr_t atom) const override;
 
     /*========================================================================*/
     /*                 Functions to re-use pre-computed pairs                 */
@@ -92,50 +82,24 @@ public:
     /// a neighbor list has been added with `set_precomputed_pairs`.
     bool use_native_system() const;
 
-    /// Set the list of pre-computed pairs to `pairs` (following the convention
-    /// required by `rascaline::System::pairs`), and store the `cutoff` used to
-    /// compute the pairs.
-    void set_precomputed_pairs(double cutoff, std::vector<rascal_pair_t> pairs);
-
-    /*========================================================================*/
-    /*                 Functions for the Python interface                     */
-    /*========================================================================*/
-
-    /// Get the species for this system
-    torch::Tensor get_species() {
-        return species_;
-    }
-
-    /// Get the positions for this system
-    torch::Tensor get_positions() {
-        return positions_;
-    }
-
-    /// Get the cell for this system
-    torch::Tensor get_cell() {
-        return cell_;
-    }
-
-    /// @private implementation of __len__ for TorchScript
-    int64_t len() const {
-        return species_.size(0);
-    }
-
-    /// @private implementation of __str__ for TorchScript
-    std::string str() const;
-
-    // TODO: convert from a Dict[str, TorchTensorMap] for the interface with LAMMPS
-    // static TorchSystem from_metatensor_dict();
-
 private:
-    torch::Tensor species_;
+    // the origin of all the data
+    metatensor_torch::System system_;
+
+    /// atomic types tensor, contiguous and on CPU
+    torch::Tensor types_;
+    /// positions tensor, contiguous, on CPU and with dtype=float64
     torch::Tensor positions_;
+    /// cell tensor, contiguous, on CPU and with dtype=float64
     torch::Tensor cell_;
+
 
     struct PrecomputedPairs {
         std::vector<rascal_pair_t> pairs_;
-        std::vector<std::vector<rascal_pair_t>> pairs_by_center_;
+        std::vector<std::vector<rascal_pair_t>> pairs_by_atom_;
     };
+
+    void set_precomputed_pairs(double cutoff, std::vector<rascal_pair_t> pairs);
 
     // all precomputed pairs we know about
     std::map<double, PrecomputedPairs> precomputed_pairs_;

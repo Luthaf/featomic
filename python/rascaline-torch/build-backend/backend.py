@@ -18,7 +18,7 @@ if os.path.exists(os.path.join(RASCALINE, "rascaline-c-api")):
     RASCALINE_DEP = f"rascaline @ file://{RASCALINE}?{uuid}"
 else:
     # we are building from a sdist
-    RASCALINE_DEP = "rascaline == 0.1.0"
+    RASCALINE_DEP = "rascaline >=0.1.0.dev0,<0.2.0"
 
 
 prepare_metadata_for_build_wheel = build_meta.prepare_metadata_for_build_wheel
@@ -28,7 +28,11 @@ build_sdist = build_meta.build_sdist
 
 def get_requires_for_build_wheel(config_settings=None):
     defaults = build_meta.get_requires_for_build_wheel(config_settings)
-    return defaults + [RASCALINE_DEP]
+    return defaults + [
+        "torch >= 1.11",
+        "metatensor-torch >=0.3.0,<0.4.0",
+        RASCALINE_DEP,
+    ]
 
 
 def get_requires_for_build_sdist(config_settings=None):

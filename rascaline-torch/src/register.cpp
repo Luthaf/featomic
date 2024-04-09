@@ -8,19 +8,6 @@ TORCH_LIBRARY(rascaline, module) {
     // setting them to something useful here.
     const std::string DOCSTRING;
 
-    module.class_<SystemHolder>("System")
-        .def(torch::init<torch::Tensor, torch::Tensor, torch::Tensor>(),
-            DOCSTRING,
-            {torch::arg("species"), torch::arg("positions"), torch::arg("cell")}
-        )
-        .def("__str__", &SystemHolder::str)
-        .def("__repr__", &SystemHolder::str)
-        .def("__len__", &SystemHolder::len)
-        .def_property("species", &SystemHolder::get_species)
-        .def_property("positions", &SystemHolder::get_positions)
-        .def_property("cell", &SystemHolder::get_cell)
-        ;
-
     module.class_<CalculatorOptionsHolder>("CalculatorOptions")
         .def(torch::init())
         .def_readwrite("gradients", &CalculatorOptionsHolder::gradients)
@@ -52,20 +39,20 @@ TORCH_LIBRARY(rascaline, module) {
         })
         .def_pickle(
             // __getstate__
-            [](const TorchCalculator& self) -> std::vector<std::string> {
-                return {self->name(), self->parameters()};
+            [](const TorchCalculator& self) -> std::tuple<std::string, std::string> {
+                return {self->c_name(), self->parameters()};
             },
             // __setstate__
-            [](std::vector<std::string> state) -> TorchCalculator {
+            [](std::tuple<std::string, std::string> state) -> TorchCalculator {
                 return c10::make_intrusive<CalculatorHolder>(
-                    state[0], state[1]
+                    std::get<0>(state), std::get<1>(state)
                 );
             })
         ;
 
     module.def(
         "register_autograd("
-            "__torch__.torch.classes.rascaline.System[] systems,"
+            "__torch__.torch.classes.metatensor.System[] systems,"
             "__torch__.torch.classes.metatensor.TensorMap precomputed,"
             "str[] forward_gradients"
         ") -> __torch__.torch.classes.metatensor.TensorMap",

@@ -1,5 +1,5 @@
-# sphinx dependencies
-sphinx < 7.2    # breathe is not compatible with sphinx 7.2 yet
+# sphinx and dependencies
+sphinx == 7.2.6
 furo            # sphinx theme
 breathe >=4.33  # C and C++ => sphinx through doxygen
 sphinx-gallery  # convert python files into nice documentation
@@ -10,7 +10,8 @@ myst-parser     # markdown => rst translation, used in extensions/rascaline_json
 
 # dependencies for the tutorials
 --extra-index-url https://download.pytorch.org/whl/cpu
-metatensor[torch] >=0.1.0,<0.2.0
+metatensor
+metatensor-torch >= 0.3.0,<0.4.0
 torch
 chemfiles
 matplotlib

@@ -12,7 +12,7 @@
 using namespace rascaline_torch;
 using namespace metatensor_torch;
 
-static TorchSystem test_system(bool positions_grad, bool cell_grad);
+static metatensor_torch::System test_system(bool positions_grad, bool cell_grad);
 
 
 TEST_CASE("Calculator") {
@@ -34,14 +34,14 @@ TEST_CASE("Calculator") {
         auto descriptor = calculator.compute({system});
 
         CHECK(*descriptor->keys() == metatensor::Labels(
-            {"species_center"},
+            {"center_type"},
             {{1}, {6}}
         ));
 
         // H block
         auto block = TensorMapHolder::block_by_id(descriptor, 0);
         CHECK(*block->samples() == metatensor::Labels(
-            {"structure", "center"},
+            {"system", "atom"},
             {{0, 1}, {0, 2}, {0, 3}}
         ));
         CHECK(*block->properties() == metatensor::Labels(
@@ -62,7 +62,7 @@ TEST_CASE("Calculator") {
         // C block
         block = TensorMapHolder::block_by_id(descriptor, 1);
         CHECK(*block->samples() == metatensor::Labels(
-            {"structure", "center"},
+            {"system", "atom"},
             {{0, 0}}
         ));
         CHECK(*block->properties() == metatensor::Labels(
@@ -83,11 +83,11 @@ TEST_CASE("Calculator") {
         auto system = test_system(false, false);
 
         auto options = torch::make_intrusive<CalculatorOptionsHolder>();
-        options->set_selected_keys(LabelsHolder::create({"species_center"}, {{12}, {1}}));
+        options->set_selected_keys(LabelsHolder::create({"center_type"}, {{12}, {1}}));
         auto descriptor = calculator.compute({system}, options);
 
         CHECK(*descriptor->keys() == metatensor::Labels(
-            {"species_center"},
+            {"center_type"},
             {{12}, {1}}
         ));
 
@@ -107,20 +107,20 @@ TEST_CASE("Calculator") {
         auto system = test_system(false, false);
 
         auto options = torch::make_intrusive<CalculatorOptionsHolder>();
-        options->set_selected_samples(LabelsHolder::create({"center"}, {{0}, {2}}));
+        options->set_selected_samples(LabelsHolder::create({"atom"}, {{0}, {2}}));
         auto descriptor = calculator.compute({system}, options);
 
         // H block
         auto block = TensorMapHolder::block_by_id(descriptor, 0);
         CHECK(*block->samples() == metatensor::Labels(
-            {"structure", "center"},
+            {"system", "atom"},
             {{0, 2}}
         ));
 
         // C block
         block = TensorMapHolder::block_by_id(descriptor, 1);
         CHECK(*block->samples() == metatensor::Labels(
-            {"structure", "center"},
+            {"system", "atom"},
             {{0, 0}}
         ));
     }
@@ -156,7 +156,7 @@ TEST_CASE("Calculator") {
         auto descriptor = calculator.compute({system}, options);
 
         CHECK(*descriptor->keys() == metatensor::Labels(
-            {"species_center"},
+            {"center_type"},
             {{1}, {6}}
         ));
 
@@ -173,7 +173,7 @@ TEST_CASE("Calculator") {
         // forward gradients
         auto gradient = TensorBlockHolder::gradient(block, "positions");
         CHECK(*gradient->samples() == metatensor::Labels(
-            {"sample", "structure", "atom"},
+            {"sample", "system", "atom"},
             {
                 {0, 0, 0}, {0, 0, 1}, {0, 0, 2},
                 {1, 0, 1}, {1, 0, 2}, {1, 0, 3},
@@ -205,7 +205,7 @@ TEST_CASE("Calculator") {
         // forward gradients
         gradient = TensorBlockHolder::gradient(block, "positions");
         CHECK(*gradient->samples() == metatensor::Labels(
-            {"sample", "structure", "atom"},
+            {"sample", "system", "atom"},
             {{0, 0, 0}, {0, 0, 1}}
         ));
         expected = torch::tensor({
@@ -220,7 +220,7 @@ TEST_CASE("Calculator") {
         auto descriptor = calculator.compute({system}, /* forward_gradients */ {});
 
         CHECK(*descriptor->keys() == metatensor::Labels(
-            {"species_center"},
+            {"center_type"},
             {{1}, {6}}
         ));
 
@@ -259,7 +259,7 @@ TEST_CASE("Calculator") {
         auto descriptor = calculator.compute({system}, options);
 
         CHECK(*descriptor->keys() == metatensor::Labels(
-            {"species_center"},
+            {"center_type"},
             {{1}, {6}}
         ));
 
@@ -287,8 +287,8 @@ TEST_CASE("Calculator") {
     }
 }
 
-TorchSystem test_system(bool positions_grad, bool cell_grad) {
-    auto species = torch::tensor({6, 1, 1, 1});
+metatensor_torch::System test_system(bool positions_grad, bool cell_grad) {
+    auto types = torch::tensor({6, 1, 1, 1});
     auto positions = torch::tensor({
         0.0, 0.0, 0.0,
         1.0, 1.0, 1.0,
@@ -300,5 +300,5 @@ TorchSystem test_system(bool positions_grad, bool cell_grad) {
     auto cell = 10 * torch::eye(3);
     cell.requires_grad_(cell_grad);
 
-    return torch::make_intrusive<SystemHolder>(species, positions, cell);
+    return torch::make_intrusive<metatensor_torch::SystemHolder>(types, positions, cell);
 }
