@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <chrono>
 
 #include <metatensor/torch.hpp>
 #include <featomic.hpp>
@@ -193,6 +194,8 @@ metatensor_torch::TensorMap CalculatorHolder::compute(
     std::vector<metatomic_torch::System> systems,
     TorchCalculatorOptions torch_options
 ) {
+    auto now = std::chrono::high_resolution_clock::now();
+
     auto dtype = systems_dtype(systems);
     auto device = systems_device(systems);
 
@@ -305,6 +308,10 @@ metatensor_torch::TensorMap CalculatorHolder::compute(
             block
         );
     }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - now).count();
+    TORCH_WARN("featomic calculation took ", (double)duration / 1e6, " ms");
 
     // ====================== handle forward gradients ====================== //
     if (all_forward_gradients) {
